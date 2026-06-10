@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Learning Centre MS — Management Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .tabular { font-variant-numeric: tabular-nums; }
+  ::-webkit-scrollbar { height: 8px; width: 8px; }
+  ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+</style>
+</head>
+<body class="bg-gray-50 text-gray-900">
+
+<div class="flex min-h-screen">
+  <!-- ===================== SIDEBAR ===================== -->
+  <aside class="hidden w-60 shrink-0 flex-col border-r border-gray-200 bg-white md:flex">
+    <div class="flex items-center gap-2.5 px-5 py-5">
+      <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-sm font-bold text-white">LC</div>
+      <div>
+        <p class="text-sm font-semibold leading-tight">Learning Centre</p>
+        <p class="text-[11px] text-gray-400">Management System</p>
+      </div>
+    </div>
+    <nav id="nav" class="mt-2 flex-1 space-y-1 px-3"></nav>
+    <div class="border-t border-gray-100 p-4">
+      <button onclick="resetData()" class="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-500 hover:bg-gray-50">↺ Reset demo data</button>
+    </div>
+  </aside>
+
+  <!-- ===================== MAIN ===================== -->
+  <div class="flex-1">
+    <header class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white/80 px-6 py-3 backdrop-blur">
+      <div class="flex items-center gap-3 md:hidden">
+        <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-xs font-bold text-white">LC</div>
+        <select id="mobileNav" onchange="go(this.value)" class="rounded-lg border-gray-200 text-sm"></select>
+      </div>
+      <h1 id="pageTitle" class="hidden text-lg font-semibold md:block"></h1>
+      <div class="flex items-center gap-3 text-sm">
+        <span id="semBadge" class="rounded-full bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700"></span>
+        <span class="hidden text-gray-400 sm:block" id="todayLbl"></span>
+      </div>
+    </header>
+    <main id="main" class="mx-auto max-w-6xl p-6"></main>
+  </div>
+</div>
+
+<!-- Modal -->
+<div id="modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/40 p-4">
+  <div id="modalBox" class="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"></div>
+</div>
+<div id="toast" class="fixed bottom-5 left-1/2 z-50 hidden -translate-x-1/2 rounded-xl bg-gray-900 px-4 py-2.5 text-sm text-white shadow-lg"></div>
+
+<script>
+/* =====================================================================
+   LEARNING CENTRE MS — single-file demo
+   Frontend simulation of the full stack (PostgreSQL schema + Express API
+   logic compiled into an in-browser data layer with localStorage).
+   State machines, double-booking checks, billing engine, immutable
+   receipts — all mirror the production design in /db/schema.sql.
+===================================================================== */
+
+const LS_KEY = 'lcms_v1';
+const MONTH = new Date().toISOString().slice(0, 7);            // e.g. 2026-06
+const TODAY = new Date().toISOString().slice(0, 10);
+const uid = () => Math.random().toString(36).slice(2, 10);
+const money = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'THB', maximumFractionDigits: 0 }).format(n);
+
+/* ----------------------- SEED DATA ----------------------- */
+function seed() {
+  const teachers = [
+    { id: 't1', code: 'TCH-001', name: 'Dr. Siriporn Wattana', specializations: ['Mathematics', 'Statistics'], status: 'Active', maxHours: 30 },
+    { id: 't2', code: 'TCH-002', name: 'James Holloway', specializations: ['English', 'Literature'], status: 'Active', maxHours: 25 },
+    { id: 't3', code: 'TCH-003', name: 'Akira Tanaka', specializations: ['Physics', 'Robotics'], status: 'Active', maxHours: 28 },
+    { id: 't4', code: 'TCH-004', name: 'Marie Dubois', specializations: ['French', 'Art History'], status: 'On_Leave', maxHours: 20 },
+  ];
+  const classes = [
+    { id: 'c1', code: 'MATH-201', title: 'Intermediate Algebra', credits: 3, tuition: 12000 },
+    { id: 'c2', code: 'ENG-110', title: 'Academic English I', credits: 3, tuition: 10500 },
+    { id: 'c3', code: 'PHY-150', title: 'Foundations of Physics', credits: 4, tuition: 14000 },
+    { id: 'c4', code: 'FRE-101', title: 'French for Beginners', credits: 2, tuition: 9000 },
+    { id: 'c5', code: 'MATH-305', title: 'Statistics & Probability', credits: 3, tuition: 13500 },
+  ];
+  const rooms = [
+    { id: 'r1', code: 'A-101', capacity: 30 }, { id: 'r2', code: 'B-204', capacity: 24 },
+    { id: 'r3', code: 'LAB-1', capacity: 18 }, { id: 'r4', code: 'C-310', capacity: 40 },
+  ];
+  const plans = [
+    { id: 'p1', code: 'STEM-5Y', title: '5-Year STEM Track', version: 2, adminFee: 1500 },
+    { id: 'p2', code: 'LANG-5Y', title: '5-Year Language & Humanities Track', version: 1, adminFee: 1200 },
+  ];
+  const students = [
+    { id: 's1', code: 'STU-2024-0117', name: 'Napat Srisuwan', status: 'Active', enrolled: '2024-05-15', planId: 'p1', year: 3, planHistory: [{ planId: 'p1', from: '2024-05-15', to: null }] },
+    { id: 's2', code: 'STU-2025-0023', name: 'Lily Chen', status: 'Active', enrolled: '2025-05-20', planId: 'p2', year: 2, planHistory: [{ planId: 'p2', from: '2025-05-20', to: null }] },
+    { id: 's3', code: 'STU-2023-0089', name: 'Arthit Boonmee', status: 'Active', enrolled: '2023-05-18', planId: 'p1', year: 4, planHistory: [{ planId: 'p2', from: '2023-05-18', to: '2024-11-01' }, { planId: 'p1', from: '2024-11-01', to: null }] },
+    { id: 's4', code: 'STU-2022-0051', name: 'Sofia Martinez', status: 'Suspended', enrolled: '2022-05-12', planId: 'p2', year: 5, planHistory: [{ planId: 'p2', from: '2022-05-12', to: null }] },
+    { id: 's5', code: 'STU-2021-0042', name: 'Kawin Phromsri', status: 'Graduated', enrolled: '2021-05-10', planId: 'p1', year: 5, planHistory: [{ planId: 'p1', from: '2021-05-10', to: null }] },
+  ];
+  const offerings = [ // class instance in current semester w/ teacher
+    { id: 'o1', classId: 'c1', teacherId: 't1', section: 1, seats: 30 },
+    { id: 'o2', classId: 'c2', teacherId: 't2', section: 1, seats: 24 },
+    { id: 'o3', classId: 'c3', teacherId: 't3', section: 1, seats: 18 },
+    { id: 'o4', classId: 'c5', teacherId: 't1', section: 1, seats: 30 },
+    { id: 'o5', classId: 'c4', teacherId: 't4', section: 1, seats: 20 },
+  ];
+  const slots = [
+    { id: 'sl1', offeringId: 'o1', roomId: 'r1', day: 'Mon', start: '09:00', end: '10:30' },
+    { id: 'sl2', offeringId: 'o1', roomId: 'r1', day: 'Wed', start: '09:00', end: '10:30' },
+    { id: 'sl3', offeringId: 'o2', roomId: 'r2', day: 'Mon', start: '11:00', end: '12:30' },
+    { id: 'sl4', offeringId: 'o3', roomId: 'r3', day: 'Tue', start: '13:00', end: '15:00' },
+    { id: 'sl5', offeringId: 'o4', roomId: 'r4', day: 'Thu', start: '09:00', end: '10:30' },
+    { id: 'sl6', offeringId: 'o5', roomId: 'r2', day: 'Fri', start: '10:00', end: '11:30' },
+  ];
+  const enrollments = [
+    { studentId: 's1', offeringId: 'o1' }, { studentId: 's1', offeringId: 'o3' }, { studentId: 's1', offeringId: 'o4' },
+    { studentId: 's2', offeringId: 'o2' }, { studentId: 's2', offeringId: 'o5' },
+    { studentId: 's3', offeringId: 'o1' }, { studentId: 's3', offeringId: 'o4' },
+    { studentId: 's4', offeringId: 'o2' },
+  ];
+  const docCategories = [
+    { code: 'TRANSCRIPT', title: 'Official Transcript', required: true },
+    { code: 'ENROLLMENT_FORM', title: 'Enrollment Form', required: true },
+    { code: 'MEDICAL', title: 'Medical Record', required: true },
+    { code: 'VISA_ID', title: 'Visa / National ID', required: true },
+    { code: 'MONTHLY_ASSIGNMENT', title: 'Monthly Assignment', required: false },
+    { code: 'PAYMENT_SLIP', title: 'Payment Slip', required: false },
+  ];
+  const documents = [
+    { id: uid(), studentId: 's1', category: 'TRANSCRIPT', status: 'Approved', version: 2, uploadedAt: '2026-01-12', fileName: 'transcript_napat_v2.pdf' },
+    { id: uid(), studentId: 's1', category: 'ENROLLMENT_FORM', status: 'Approved', version: 1, uploadedAt: '2024-05-15', fileName: 'enrollment_napat.pdf' },
+    { id: uid(), studentId: 's1', category: 'VISA_ID', status: 'Under_Review', version: 1, uploadedAt: '2026-06-01', fileName: 'id_napat.jpg' },
+    { id: uid(), studentId: 's2', category: 'ENROLLMENT_FORM', status: 'Approved', version: 1, uploadedAt: '2025-05-20', fileName: 'enrollment_lily.pdf' },
+    { id: uid(), studentId: 's2', category: 'MEDICAL', status: 'Rejected', version: 1, uploadedAt: '2026-05-22', fileName: 'medical_lily.pdf' },
+    { id: uid(), studentId: 's3', category: 'TRANSCRIPT', status: 'Approved', version: 1, uploadedAt: '2024-11-02', fileName: 'transcript_arthit.pdf' },
+    { id: uid(), studentId: 's3', category: 'MONTHLY_ASSIGNMENT', status: 'Uploaded', version: 1, uploadedAt: TODAY, fileName: 'assignment_june_arthit.pdf' },
+  ];
+  // pre-generated invoices: last month (paid/overdue mix) + this month
+  const lastMonth = new Date(); lastMonth.setMonth(lastMonth.getMonth() - 1);
+  const LM = lastMonth.toISOString().slice(0, 7);
+  let invSeq = 1;
+  const mkInv = (sid, period, total, paid, status, dueShift) => ({
+    id: uid(), no: `INV-${period.replace('-','')}-${String(invSeq++).padStart(4,'0')}`,
+    studentId: sid, period, total, paid, status,
+    due: period + '-15', lines: [], createdAt: period + '-01',
+  });
+  const invoices = [
+    Object.assign(mkInv('s1', LM, 41000, 41000, 'Paid'), { lines: [
+      { type: 'Tuition', desc: 'MATH-201 monthly installment', amount: 12000 },
+      { type: 'Tuition', desc: 'PHY-150 monthly installment', amount: 14000 },
+      { type: 'Tuition', desc: 'MATH-305 monthly installment', amount: 13500 },
+      { type: 'Admin_Fee', desc: 'Monthly administrative fee', amount: 1500 } ]}),
+    Object.assign(mkInv('s2', LM, 20700, 10000, 'Overdue'), { lines: [
+      { type: 'Tuition', desc: 'ENG-110 monthly installment', amount: 10500 },
+      { type: 'Tuition', desc: 'FRE-101 monthly installment', amount: 9000 },
+      { type: 'Admin_Fee', desc: 'Monthly administrative fee', amount: 1200 } ]}),
+    Object.assign(mkInv('s3', LM, 27000, 27000, 'Paid'), { lines: [
+      { type: 'Tuition', desc: 'MATH-201 monthly installment', amount: 12000 },
+      { type: 'Tuition', desc: 'MATH-305 monthly installment', amount: 13500 },
+      { type: 'Admin_Fee', desc: 'Monthly administrative fee', amount: 1500 } ]}),
+  ];
+  const payments = [
+    { id: uid(), studentId: 's1', amount: 41000, method: 'Bank_Transfer', at: LM + '-09', receiptNo: `RCPT-${LM.replace('-','')}-0001`, allocations: [{ invoiceNo: invoices[0].no, amount: 41000 }] },
+    { id: uid(), studentId: 's2', amount: 10000, method: 'Credit_Card', at: LM + '-20', receiptNo: `RCPT-${LM.replace('-','')}-0002`, allocations: [{ invoiceNo: invoices[1].no, amount: 10000 }] },
+    { id: uid(), studentId: 's3', amount: 27000, method: 'PromptPay', at: LM + '-05', receiptNo: `RCPT-${LM.replace('-','')}-0003`, allocations: [{ invoiceNo: invoices[2].no, amount: 27000 }] },
+  ];
+  return { teachers, classes, rooms, plans, students, offerings, slots, enrollments, docCategories, documents, invoices, payments, seq: { inv: invSeq, rcpt: 4 } };
+}
+
+let DB = JSON.parse(localStorage.getItem(LS_KEY) || 'null') || seed();
+const save = () => localStorage.setItem(LS_KEY, JSON.stringify(DB));
+function resetData() { DB = seed(); save(); go(route); toast('Demo data reset'); }
+
+/* ----------------------- HELPERS ----------------------- */
+const byId = (arr, id) => arr.find(x => x.id === id);
+const cls = id => byId(DB.classes, id);
+const tch = id => byId(DB.teachers, id);
+const room = id => byId(DB.rooms, id);
+const stu = id => byId(DB.students, id);
+const off = id => byId(DB.offerings, id);
+const plan = id => byId(DB.plans, id);
+const balance = inv => inv.total - inv.paid;
+
+const BADGE = {
+  Paid: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20', Active: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20', Approved: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
+  Pending_Payment: 'bg-amber-50 text-amber-700 ring-amber-600/20', Under_Review: 'bg-amber-50 text-amber-700 ring-amber-600/20', Uploaded: 'bg-sky-50 text-sky-700 ring-sky-600/20', On_Leave: 'bg-amber-50 text-amber-700 ring-amber-600/20',
+  Partially_Paid: 'bg-sky-50 text-sky-700 ring-sky-600/20',
+  Overdue: 'bg-rose-50 text-rose-700 ring-rose-600/20', Rejected: 'bg-rose-50 text-rose-700 ring-rose-600/20', Suspended: 'bg-rose-50 text-rose-700 ring-rose-600/20',
+  Void: 'bg-gray-100 text-gray-500 ring-gray-500/10', Missing: 'bg-gray-100 text-gray-500 ring-gray-500/10', Graduated: 'bg-indigo-50 text-indigo-700 ring-indigo-600/20', Withdrawn: 'bg-gray-100 text-gray-500 ring-gray-500/10',
+};
+const badge = s => `<span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${BADGE[s] || BADGE.Void}">${s.replace(/_/g,' ')}</span>`;
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.remove('hidden');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.add('hidden'), 2600);
+}
+function openModal(html) { document.getElementById('modalBox').innerHTML = html; document.getElementById('modal').classList.replace('hidden','flex'); }
+function closeModal() { document.getElementById('modal').classList.replace('flex','hidden'); }
+document.getElementById('modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
+
+/* ----------------------- BILLING ENGINE ----------------------- */
+// Mirrors server/src/services/invoiceGenerator.js — idempotent per month.
+function generateMonthlyInvoices() {
+  let created = 0;
+  for (const s of DB.students) {
+    if (s.status !== 'Active') continue;
+    if (DB.invoices.some(i => i.studentId === s.id && i.period === MONTH && i.status !== 'Void')) continue;
+    const enr = DB.enrollments.filter(e => e.studentId === s.id);
+    const p = plan(s.planId);
+    const lines = enr.map(e => {
+      const c = cls(off(e.offeringId).classId);
+      return { type: 'Tuition', desc: `${c.code} ${c.title} — monthly installment`, amount: c.tuition };
+    });
+    if (p?.adminFee) lines.push({ type: 'Admin_Fee', desc: 'Monthly administrative fee', amount: p.adminFee });
+    if (!lines.length) continue;
+    const total = lines.reduce((t, l) => t + l.amount, 0);
+    DB.invoices.push({
+      id: uid(), no: `INV-${MONTH.replace('-','')}-${String(DB.seq.inv++).padStart(4,'0')}`,
+      studentId: s.id, period: MONTH, total, paid: 0, status: 'Pending_Payment',
+      due: MONTH + '-15', lines, createdAt: TODAY,
+    });
+    created++;
+  }
+  save();
+  toast(created ? `${created} invoice(s) generated for ${MONTH}` : `All active students already billed for ${MONTH} (idempotent)`);
+  go(route);
+}
+
+// Mirrors paymentWebhook.controller.js — FIFO allocation + immutable receipt.
+function recordPayment(studentId, amount, method) {
+  amount = Number(amount);
+  if (!amount || amount <= 0) return toast('Enter a valid amount');
+  const open = DB.invoices
+    .filter(i => i.studentId === studentId && ['Pending_Payment','Partially_Paid','Overdue'].includes(i.status))
+    .sort((a, b) => a.due.localeCompare(b.due));
+  let remaining = amount; const allocations = [];
+  for (const inv of open) {
+    if (remaining <= 0) break;
+    const applied = Math.min(remaining, balance(inv));
+    inv.paid += applied;
+    inv.status = inv.paid >= inv.total ? 'Paid' : 'Partially_Paid';
+    allocations.push({ invoiceNo: inv.no, amount: applied });
+    remaining -= applied;
+  }
+  const receiptNo = `RCPT-${MONTH.replace('-','')}-${String(DB.seq.rcpt++).padStart(4,'0')}`;
+  DB.payments.push({ id: uid(), studentId, amount, method, at: TODAY, receiptNo, allocations });
+  save(); closeModal();
+  toast(`Payment recorded — receipt ${receiptNo}${remaining > 0 ? ` (credit ${money(remaining)})` : ''}`);
+  go(route);
+}
+
+function voidInvoice(id) {
+  const inv = byId(DB.invoices, id);
+  if (inv.status === 'Paid') return toast('Paid invoices cannot be voided (state machine)');
+  inv.status = 'Void'; save(); go(route); toast(`${inv.no} voided`);
+}
+
+function sweepOverdue() {
+  let n = 0;
+  for (const i of DB.invoices)
+    if (['Pending_Payment','Partially_Paid'].includes(i.status) && i.due < TODAY) { i.status = 'Overdue'; n++; }
+  save(); go(route); toast(n ? `${n} invoice(s) marked Overdue` : 'No invoices past due');
+}
+
+/* ----------------------- SCHEDULING (double-booking guard) ----------------------- */
+// Mirrors the EXCLUDE USING gist constraints in schema.sql.
+function slotConflicts(day, start, end, roomId, teacherId, ignoreId) {
+  const out = [];
+  for (const sl of DB.slots) {
+    if (sl.id === ignoreId || sl.day !== day) continue;
+    const overlap = start < sl.end && sl.start < end;
+    if (!overlap) continue;
+    if (sl.roomId === roomId) out.push(`Room ${room(roomId).code} is taken ${sl.start}–${sl.end} (${cls(off(sl.offeringId).classId).code})`);
+    if (off(sl.offeringId).teacherId === teacherId) out.push(`${tch(teacherId).name} already teaches ${sl.start}–${sl.end} (${cls(off(sl.offeringId).classId).code})`);
+  }
+  return out;
+}
+
+function addSlotFromForm() {
+  const f = id => document.getElementById(id).value;
+  const offeringId = f('f_off'), roomId = f('f_room'), day = f('f_day'), start = f('f_start'), end = f('f_end');
+  if (!start || !end || end <= start) return toast('Invalid time range');
+  const conflicts = slotConflicts(day, start, end, roomId, off(offeringId).teacherId, null);
+  if (conflicts.length) {
+    document.getElementById('conflictBox').innerHTML =
+      `<div class="mt-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-700"><b>⛔ Double-booking blocked (DB constraint):</b><ul class="ml-4 mt-1 list-disc">${conflicts.map(c=>`<li>${c}</li>`).join('')}</ul></div>`;
+    return;
+  }
+  DB.slots.push({ id: uid(), offeringId, roomId, day, start, end });
+  save(); closeModal(); toast('Slot added — no conflicts'); go(route);
+}
+
+/* ----------------------- DOCUMENTS ----------------------- */
+function simulateUpload(studentId, category, fileName) {
+  const prev = DB.documents.filter(d => d.studentId === studentId && d.category === category);
+  DB.documents.push({
+    id: uid(), studentId, category, status: 'Uploaded',
+    version: prev.length + 1, uploadedAt: TODAY,
+    fileName: fileName || `${category.toLowerCase()}_${uid()}.pdf`,
+  });
+  save(); closeModal(); go(route);
+  toast('Uploaded via presigned URL → status: Uploaded (pending review)');
+}
+function reviewDoc(id, status) { byId(DB.documents, id).status = status; save(); go(route); toast(`Document ${status.replace('_',' ').toLowerCase()}`); }
+
+function docMatrix(studentId) {
+  return DB.docCategories.filter(c => c.required || DB.documents.some(d => d.studentId === studentId && d.category === c.code))
+    .map(c => {
+      const versions = DB.documents.filter(d => d.studentId === studentId && d.category === c.code).sort((a,b) => b.version - a.version);
+      return { cat: c, latest: versions[0] || null };
+    });
+}
+
+/* ----------------------- CHANGE PLAN (SCD-2) ----------------------- */
+function changePlan(studentId, newPlanId) {
+  const s = stu(studentId);
+  if (s.planId === newPlanId) return toast('Already on that plan');
+  const cur = s.planHistory.find(h => !h.to);
+  if (cur) cur.to = TODAY;
+  s.planHistory.push({ planId: newPlanId, from: TODAY, to: null });
+  s.planId = newPlanId;
+  save(); closeModal(); go(route);
+  toast('Plan changed — history preserved, old invoices untouched, next billing cycle uses new plan');
+}
+
+/* =====================================================================
+   PAGES
+===================================================================== */
+const PAGES = [
+  { id: 'dashboard', label: '📊 Dashboard' },
+  { id: 'students', label: '🎓 Students' },
+  { id: 'schedule', label: '🗓️ Schedule Matrix' },
+  { id: 'documents', label: '📁 Documents (DMS)' },
+  { id: 'billing', label: '💳 Billing & AR' },
+];
+let route = 'dashboard';
+
+function kpi(label, value, accent) {
+  return `<div class="rounded-2xl border ${accent || 'border-gray-100 bg-white'} p-5 shadow-sm">
+    <p class="text-xs font-medium uppercase tracking-wide text-gray-400">${label}</p>
+    <p class="mt-1 text-2xl font-semibold">${value}</p></div>`;
+}
+
+/* ---------- DASHBOARD ---------- */
+function pageDashboard() {
+  const active = DB.students.filter(s => s.status === 'Active').length;
+  const open = DB.invoices.filter(i => ['Pending_Payment','Partially_Paid','Overdue'].includes(i.status));
+  const outstanding = open.reduce((t,i) => t + balance(i), 0);
+  const overdue = open.filter(i => i.status === 'Overdue');
+  const missingDocs = DB.students.filter(s => s.status === 'Active')
+    .flatMap(s => docMatrix(s.id).filter(r => r.cat.required && (!r.latest || r.latest.status === 'Rejected')).map(r => ({ s, r })));
+  const collected = DB.payments.reduce((t,p) => t + p.amount, 0);
+
+  return `
+  <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+    ${kpi('Active students', active)}
+    ${kpi('Outstanding AR', money(outstanding), outstanding ? 'border-amber-200 bg-amber-50' : '')}
+    ${kpi('Overdue invoices', overdue.length, overdue.length ? 'border-rose-200 bg-rose-50' : '')}
+    ${kpi('Collected (all time)', money(collected))}
+  </div>
+
+  <div class="mt-6 grid gap-6 lg:grid-cols-2">
+    <div class="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+      <div class="mb-3 flex items-center justify-between">
+        <h3 class="font-semibold">⚠️ Attention required</h3>
+      </div>
+      <ul class="space-y-2.5 text-sm">
+        ${overdue.map(i => `<li class="flex items-center justify-between rounded-lg bg-rose-50/60 px-3 py-2">
+          <span><b>${stu(i.studentId).name}</b> — ${i.no} overdue since ${i.due}</span>
+          <span class="font-semibold text-rose-600 tabular">${money(balance(i))}</span></li>`).join('')}
+        ${missingDocs.map(({s, r}) => `<li class="flex items-center justify-between rounded-lg bg-amber-50/60 px-3 py-2">
+          <span><b>${s.name}</b> — ${r.cat.title} ${r.latest ? 'rejected' : 'missing'}</span>${badge(r.latest ? 'Rejected' : 'Missing')}</li>`).join('')}
+        ${(!overdue.length && !missingDocs.length) ? '<li class="py-6 text-center text-gray-400">All clear 🎉</li>' : ''}
+      </ul>
+    </div>
+
+    <div class="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+      <h3 class="mb-3 font-semibold">🧾 Recent receipts <span class="ml-1 text-xs font-normal text-gray-400">(immutable log)</span></h3>
+      <ul class="divide-y divide-gray-50 text-sm">
+        ${DB.payments.slice(-6).reverse().map(p => `<li class="flex items-center justify-between py-2.5">
+          <div><p class="font-medium">${stu(p.studentId).name}</p>
+          <p class="font-mono text-xs text-gray-400">${p.receiptNo} · ${p.method.replace('_',' ')} · ${p.at}</p></div>
+          <span class="font-semibold text-emerald-600 tabular">${money(p.amount)}</span></li>`).join('')}
+      </ul>
+    </div>
+  </div>
+
+  <div class="mt-6 rounded-2xl border border-indigo-100 bg-indigo-50/50 p-5">
+    <h3 class="font-semibold text-indigo-900">⚙️ Billing engine</h3>
+    <p class="mt-1 text-sm text-indigo-700/80">Generate this month's invoices for all active students (idempotent — safe to run twice), or run the nightly overdue sweep.</p>
+    <div class="mt-3 flex gap-3">
+      <button onclick="generateMonthlyInvoices()" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">Generate ${MONTH} invoices</button>
+      <button onclick="sweepOverdue()" class="rounded-lg border border-indigo-200 bg-white px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">Run overdue sweep</button>
+    </div>
+  </div>`;
+}
+
+/* ---------- STUDENTS ---------- */
+function pageStudents() {
+  return `
+  <div class="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
+    <table class="min-w-full divide-y divide-gray-100 text-sm">
+      <thead class="bg-gray-50/60"><tr class="text-left text-xs font-medium uppercase tracking-wide text-gray-400">
+        <th class="px-5 py-3">Student</th><th class="px-5 py-3">Plan / Year</th><th class="px-5 py-3">Status</th>
+        <th class="px-5 py-3 text-right">Balance</th><th class="px-5 py-3 text-right"></th></tr></thead>
+      <tbody class="divide-y divide-gray-50">
+      ${DB.students.map(s => {
+        const bal = DB.invoices.filter(i => i.studentId === s.id && i.status !== 'Void').reduce((t,i) => t + balance(i), 0);
+        return `<tr class="hover:bg-gray-50/50">
+          <td class="px-5 py-3.5"><p class="font-medium">${s.name}</p><p class="font-mono text-xs text-gray-400">${s.code}</p></td>
+          <td class="px-5 py-3.5 text-gray-600">${plan(s.planId).code} · Year ${s.year}/5</td>
+          <td class="px-5 py-3.5">${badge(s.status)}</td>
+          <td class="px-5 py-3.5 text-right font-semibold tabular ${bal > 0 ? 'text-gray-900' : 'text-emerald-600'}">${money(bal)}</td>
+          <td class="px-5 py-3.5 text-right"><button onclick="openProfile('${s.id}')" class="rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-700">View profile</button></td></tr>`;
+      }).join('')}
+      </tbody></table></div>`;
+}
+
+// Unified profile — mirrors GET /students/:id/profile
+function openProfile(id) {
+  const s = stu(id);
+  const schedule = DB.enrollments.filter(e => e.studentId === id).flatMap(e =>
+    DB.slots.filter(sl => sl.offeringId === e.offeringId).map(sl => {
+      const o = off(sl.offeringId);
+      return { ...sl, class: cls(o.classId), teacher: tch(o.teacherId), room: room(sl.roomId) };
+    })).sort((a,b) => 'MonTueWedThuFriSatSun'.indexOf(a.day) - 'MonTueWedThuFriSatSun'.indexOf(b.day) || a.start.localeCompare(b.start));
+  const docs = docMatrix(id);
+  const invs = DB.invoices.filter(i => i.studentId === id).sort((a,b) => b.period.localeCompare(a.period));
+  const history = s.planHistory.map(h => `<li class="flex justify-between"><span>${plan(h.planId).code} v${plan(h.planId).version}</span><span class="text-gray-400">${h.from} → ${h.to || 'current'}</span></li>`).join('');
+
+  openModal(`
+  <div class="flex items-start justify-between">
+    <div><h2 class="text-lg font-semibold">${s.name}</h2>
+    <p class="font-mono text-xs text-gray-400">${s.code} · enrolled ${s.enrolled}</p></div>
+    <div class="flex items-center gap-2">${badge(s.status)}
+    <button onclick="closeModal()" class="rounded-lg p-1 text-gray-400 hover:bg-gray-100">✕</button></div>
+  </div>
+
+  <h3 class="mt-5 text-xs font-semibold uppercase tracking-wide text-gray-400">5-Year Plan (SCD-2 history)</h3>
+  <ul class="mt-2 space-y-1 rounded-xl bg-gray-50 p-3 text-sm">${history}</ul>
+  ${s.status === 'Active' ? `<button onclick="openChangePlan('${s.id}')" class="mt-2 text-xs font-semibold text-indigo-600 hover:underline">Change curriculum plan →</button>` : ''}
+
+  <h3 class="mt-5 text-xs font-semibold uppercase tracking-wide text-gray-400">Current schedule</h3>
+  <ul class="mt-2 space-y-1.5 text-sm">
+    ${schedule.map(x => `<li class="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2">
+      <span><b>${x.class.code}</b> ${x.class.title}<br><span class="text-xs text-gray-400">${x.teacher.name} · Room ${x.room.code}</span></span>
+      <span class="text-xs font-medium text-gray-600">${x.day} ${x.start}–${x.end}</span></li>`).join('') || '<li class="text-gray-400">No enrollments</li>'}
+  </ul>
+
+  <h3 class="mt-5 text-xs font-semibold uppercase tracking-wide text-gray-400">Documents</h3>
+  <ul class="mt-2 space-y-1.5 text-sm">
+    ${docs.map(r => `<li class="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2">
+      <span>${r.cat.title}${r.latest ? ` <span class="text-xs text-gray-400">v${r.latest.version}</span>` : ''}</span>
+      ${badge(r.latest ? r.latest.status : 'Missing')}</li>`).join('')}
+  </ul>
+
+  <h3 class="mt-5 text-xs font-semibold uppercase tracking-wide text-gray-400">Billing ledger</h3>
+  <ul class="mt-2 space-y-1.5 text-sm">
+    ${invs.map(i => `<li class="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2">
+      <span class="font-mono text-xs">${i.no}<br><span class="text-gray-400">${i.period}</span></span>
+      <span class="flex items-center gap-2">${badge(i.status)}<b class="tabular">${money(balance(i))}</b></span></li>`).join('') || '<li class="text-gray-400">No invoices</li>'}
+  </ul>
+  ${s.status === 'Active' ? `<button onclick="openPayModal('${s.id}')" class="mt-4 w-full rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500">Record payment</button>` : ''}`);
+}
+
+function openChangePlan(sid) {
+  const s = stu(sid);
+  openModal(`
+  <h2 class="text-lg font-semibold">Change 5-year plan — ${s.name}</h2>
+  <p class="mt-1 text-sm text-gray-500">The current assignment is closed with an end date and a new one opens today. Old invoices stay frozen; next month's invoice prices from the new plan.</p>
+  <div class="mt-4 space-y-2">
+    ${DB.plans.map(p => `<button onclick="changePlan('${sid}','${p.id}')" ${p.id===s.planId?'disabled':''}
+      class="w-full rounded-xl border px-4 py-3 text-left text-sm ${p.id===s.planId?'cursor-not-allowed border-gray-100 bg-gray-50 text-gray-400':'border-gray-200 hover:border-indigo-300 hover:bg-indigo-50/50'}">
+      <b>${p.code}</b> v${p.version} — ${p.title} ${p.id===s.planId?'(current)':''}<br>
+      <span class="text-xs text-gray-400">Admin fee ${money(p.adminFee)}/mo</span></button>`).join('')}
+  </div>
+  <button onclick="openProfile('${sid}')" class="mt-4 text-xs font-semibold text-gray-400 hover:underline">← Back to profile</button>`);
+}
+
+/* ---------- SCHEDULE ---------- */
+function pageSchedule() {
+  const days = ['Mon','Tue','Wed','Thu','Fri'];
+  const colors = ['bg-indigo-100 text-indigo-800 border-indigo-200','bg-emerald-100 text-emerald-800 border-emerald-200','bg-amber-100 text-amber-800 border-amber-200','bg-sky-100 text-sky-800 border-sky-200','bg-rose-100 text-rose-800 border-rose-200'];
+  const colorOf = oid => colors[DB.offerings.findIndex(o => o.id === oid) % colors.length];
+
+  return `
+  <div class="mb-4 flex items-center justify-between">
+    <p class="text-sm text-gray-500">Weekly matrix · double-booking of teachers & rooms is blocked exactly like the <code class="rounded bg-gray-100 px-1 text-xs">EXCLUDE USING gist</code> constraints.</p>
+    <button onclick="openAddSlot()" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">+ Add slot</button>
+  </div>
+  <div class="grid grid-cols-5 gap-3">
+    ${days.map(d => `<div>
+      <p class="mb-2 text-center text-xs font-semibold uppercase tracking-wide text-gray-400">${d}</p>
+      <div class="space-y-2">
+        ${DB.slots.filter(sl => sl.day === d).sort((a,b) => a.start.localeCompare(b.start)).map(sl => {
+          const o = off(sl.offeringId), c = cls(o.classId);
+          return `<div class="rounded-xl border p-2.5 text-xs ${colorOf(o.id)}">
+            <p class="font-bold">${c.code}</p>
+            <p>${sl.start}–${sl.end}</p>
+            <p class="mt-1 opacity-70">${tch(o.teacherId).name.split(' ')[0]} · ${room(sl.roomId).code}</p>
+            <button onclick="removeSlot('${sl.id}')" class="mt-1 font-semibold underline opacity-50 hover:opacity-100">remove</button>
+          </div>`;
+        }).join('') || '<div class="rounded-xl border border-dashed border-gray-200 p-3 text-center text-xs text-gray-300">—</div>'}
+      </div></div>`).join('')}
+  </div>
+
+  <h3 class="mt-8 mb-3 font-semibold">👩‍🏫 Teachers</h3>
+  <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    ${DB.teachers.map(t => {
+      const hours = DB.slots.filter(sl => off(sl.offeringId).teacherId === t.id)
+        .reduce((h, sl) => h + (parseInt(sl.end) - parseInt(sl.start)) + (parseInt(sl.end.slice(3)) - parseInt(sl.start.slice(3)))/60, 0);
+      return `<div class="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+        <div class="flex items-center justify-between"><p class="text-sm font-semibold">${t.name}</p>${badge(t.status)}</div>
+        <p class="mt-1 text-xs text-gray-400">${t.specializations.join(' · ')}</p>
+        <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-gray-100">
+          <div class="h-full rounded-full ${hours/t.maxHours > 0.8 ? 'bg-rose-400' : 'bg-indigo-400'}" style="width:${Math.min(100, hours/t.maxHours*100)}%"></div></div>
+        <p class="mt-1 text-[11px] text-gray-400">${hours.toFixed(1)}h / ${t.maxHours}h weekly load</p></div>`;
+    }).join('')}
+  </div>`;
+}
+function removeSlot(id) { DB.slots = DB.slots.filter(s => s.id !== id); save(); go(route); toast('Slot removed'); }
+function openAddSlot() {
+  openModal(`
+  <h2 class="text-lg font-semibold">Add schedule slot</h2>
+  <p class="mt-1 text-sm text-gray-500">Try booking Room A-101 on Mon 09:00–10:30 to see the conflict guard fire.</p>
+  <div class="mt-4 space-y-3 text-sm">
+    <label class="block">Course offering
+      <select id="f_off" class="mt-1 w-full rounded-lg border-gray-200">${DB.offerings.map(o => `<option value="${o.id}">${cls(o.classId).code} — ${tch(o.teacherId).name}</option>`).join('')}</select></label>
+    <label class="block">Room
+      <select id="f_room" class="mt-1 w-full rounded-lg border-gray-200">${DB.rooms.map(r => `<option value="${r.id}">${r.code} (cap ${r.capacity})</option>`).join('')}</select></label>
+    <div class="grid grid-cols-3 gap-3">
+      <label class="block">Day<select id="f_day" class="mt-1 w-full rounded-lg border-gray-200">${['Mon','Tue','Wed','Thu','Fri'].map(d=>`<option>${d}</option>`).join('')}</select></label>
+      <label class="block">Start<input id="f_start" type="time" value="09:00" class="mt-1 w-full rounded-lg border-gray-200"></label>
+      <label class="block">End<input id="f_end" type="time" value="10:30" class="mt-1 w-full rounded-lg border-gray-200"></label>
+    </div>
+    <div id="conflictBox"></div>
+    <button onclick="addSlotFromForm()" class="w-full rounded-xl bg-indigo-600 py-2.5 font-semibold text-white hover:bg-indigo-500">Validate & add</button>
+  </div>`);
+}
+
+/* ---------- DOCUMENTS ---------- */
+function pageDocuments() {
+  return `
+  <p class="mb-4 text-sm text-gray-500">Decoupled reference architecture: binaries live in S3/R2, this layer tracks metadata, versions & review state. Upload flows through a presigned URL (simulated).</p>
+  <div class="space-y-5">
+  ${DB.students.filter(s => s.status !== 'Graduated').map(s => {
+    const rows = docMatrix(s.id);
+    const missing = rows.filter(r => r.cat.required && (!r.latest || r.latest.status === 'Rejected')).length;
+    return `<div class="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+      <div class="mb-3 flex items-center justify-between">
+        <p class="font-semibold">${s.name} <span class="ml-1 font-mono text-xs font-normal text-gray-400">${s.code}</span></p>
+        ${missing ? `<span class="rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-medium text-rose-600">${missing} required doc(s) outstanding</span>` : '<span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-600">Complete</span>'}
+      </div>
+      <table class="min-w-full text-sm">
+        <tbody class="divide-y divide-gray-50">
+        ${rows.map(r => `<tr>
+          <td class="py-2 pr-3">${r.cat.title}${r.cat.required ? ' <span class="text-rose-400">*</span>' : ''}</td>
+          <td class="py-2 pr-3 text-xs text-gray-400">${r.latest ? `${r.latest.fileName} · v${r.latest.version} · ${r.latest.uploadedAt}` : '—'}</td>
+          <td class="py-2 pr-3">${badge(r.latest ? r.latest.status : 'Missing')}</td>
+          <td class="py-2 text-right">
+            ${r.latest && ['Uploaded','Under_Review'].includes(r.latest.status) ? `
+              <button onclick="reviewDoc('${r.latest.id}','Approved')" class="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">Approve</button>
+              <button onclick="reviewDoc('${r.latest.id}','Rejected')" class="rounded-md bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100">Reject</button>` : ''}
+            <button onclick="openUpload('${s.id}','${r.cat.code}')" class="rounded-md border border-gray-200 px-2 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50">⬆ Upload${r.latest ? ' v' + (r.latest.version + 1) : ''}</button>
+          </td></tr>`).join('')}
+        </tbody></table></div>`;
+  }).join('')}
+  </div>`;
+}
+function openUpload(sid, category) {
+  const cat = DB.docCategories.find(c => c.code === category);
+  openModal(`
+  <h2 class="text-lg font-semibold">Upload — ${cat.title}</h2>
+  <p class="mt-1 text-sm text-gray-500">For ${stu(sid).name}</p>
+  <div class="mt-4 rounded-xl bg-gray-50 p-3 font-mono text-[11px] leading-relaxed text-gray-500">
+    1. POST /documents/presign-upload → { uploadUrl, documentId }<br>
+    2. PUT file → S3/R2 directly (bytes skip the API)<br>
+    3. POST /documents/:id/confirm → status: Uploaded
+  </div>
+  <label class="mt-4 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50/40 p-8 text-center hover:bg-indigo-50">
+    <span class="text-3xl">📄</span>
+    <span class="mt-2 text-sm font-semibold text-indigo-700">Choose a file (PDF/JPG/PNG)</span>
+    <span class="text-xs text-gray-400">Simulated — metadata only is stored</span>
+    <input type="file" class="hidden" onchange="simulateUpload('${sid}','${category}', this.files[0]?.name)">
+  </label>
+  <button onclick="simulateUpload('${sid}','${category}', null)" class="mt-3 w-full rounded-xl border border-gray-200 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50">Or simulate without a file</button>`);
+}
+
+/* ---------- BILLING ---------- */
+function pageBilling() {
+  const invs = [...DB.invoices].sort((a,b) => b.period.localeCompare(a.period) || a.no.localeCompare(b.no));
+  const open = invs.filter(i => ['Pending_Payment','Partially_Paid','Overdue'].includes(i.status));
+  const outstanding = open.reduce((t,i) => t + balance(i), 0);
+
+  return `
+  <div class="grid grid-cols-3 gap-4">
+    ${kpi('Outstanding', money(outstanding), outstanding ? 'border-amber-200 bg-amber-50' : '')}
+    ${kpi('Overdue', invs.filter(i=>i.status==='Overdue').length, invs.some(i=>i.status==='Overdue') ? 'border-rose-200 bg-rose-50' : '')}
+    ${kpi('Receipts issued', DB.payments.length)}
+  </div>
+
+  <div class="mt-5 flex gap-3">
+    <button onclick="generateMonthlyInvoices()" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500">Generate ${MONTH} invoices</button>
+    <button onclick="sweepOverdue()" class="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Run overdue sweep</button>
+  </div>
+
+  <div class="mt-5 overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
+    <table class="min-w-full divide-y divide-gray-100 text-sm">
+      <thead class="bg-gray-50/60"><tr class="text-left text-xs font-medium uppercase tracking-wide text-gray-400">
+        <th class="px-5 py-3">Invoice</th><th class="px-5 py-3">Student</th><th class="px-5 py-3">Due</th><th class="px-5 py-3">Status</th>
+        <th class="px-5 py-3 text-right">Total</th><th class="px-5 py-3 text-right">Paid</th><th class="px-5 py-3 text-right">Balance</th><th class="px-5 py-3 text-right"></th></tr></thead>
+      <tbody class="divide-y divide-gray-50">
+      ${invs.map(i => `<tr class="${i.status==='Overdue' ? 'bg-rose-50/40' : i.status==='Void' ? 'opacity-50' : 'hover:bg-gray-50/50'}">
+        <td class="px-5 py-3 font-mono text-xs">${i.no}</td>
+        <td class="px-5 py-3">${stu(i.studentId).name}</td>
+        <td class="px-5 py-3 text-gray-500">${i.due}</td>
+        <td class="px-5 py-3">${badge(i.status)}</td>
+        <td class="px-5 py-3 text-right tabular">${money(i.total)}</td>
+        <td class="px-5 py-3 text-right tabular text-gray-500">${money(i.paid)}</td>
+        <td class="px-5 py-3 text-right font-semibold tabular ${balance(i) > 0 && i.status !== 'Void' ? '' : 'text-emerald-600'}">${money(i.status==='Void'?0:balance(i))}</td>
+        <td class="px-5 py-3 text-right whitespace-nowrap">
+          <button onclick="openInvoice('${i.id}')" class="rounded-md border border-gray-200 px-2 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50">Detail</button>
+          ${balance(i) > 0 && i.status !== 'Void' ? `<button onclick="openPayModal('${i.studentId}')" class="rounded-md bg-indigo-600 px-2 py-1 text-xs font-semibold text-white hover:bg-indigo-500">Pay</button>
+          <button onclick="voidInvoice('${i.id}')" class="rounded-md px-2 py-1 text-xs font-semibold text-gray-400 hover:bg-gray-50">Void</button>` : ''}
+        </td></tr>`).join('')}
+      </tbody></table></div>
+
+  <h3 class="mt-8 mb-3 font-semibold">🧾 Receipt log <span class="ml-1 text-xs font-normal text-gray-400">(immutable — no edit/delete, mirrors DB trigger)</span></h3>
+  <div class="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
+    <table class="min-w-full divide-y divide-gray-100 text-sm">
+      <thead class="bg-gray-50/60"><tr class="text-left text-xs font-medium uppercase tracking-wide text-gray-400">
+        <th class="px-5 py-3">Receipt №</th><th class="px-5 py-3">Student</th><th class="px-5 py-3">Method</th><th class="px-5 py-3">Allocations</th><th class="px-5 py-3 text-right">Amount</th></tr></thead>
+      <tbody class="divide-y divide-gray-50">
+      ${[...DB.payments].reverse().map(p => `<tr>
+        <td class="px-5 py-3 font-mono text-xs">${p.receiptNo}</td>
+        <td class="px-5 py-3">${stu(p.studentId).name}</td>
+        <td class="px-5 py-3 text-gray-500">${p.method.replace('_',' ')}</td>
+        <td class="px-5 py-3 text-xs text-gray-400">${p.allocations.map(a => `${a.invoiceNo} ← ${money(a.amount)}`).join('<br>')}</td>
+        <td class="px-5 py-3 text-right font-semibold tabular text-emerald-600">${money(p.amount)}</td></tr>`).join('')}
+      </tbody></table></div>`;
+}
+
+function openInvoice(id) {
+  const i = byId(DB.invoices, id);
+  openModal(`
+  <div class="flex items-start justify-between">
+    <div><h2 class="font-mono text-lg font-semibold">${i.no}</h2>
+    <p class="text-sm text-gray-500">${stu(i.studentId).name} · period ${i.period} · due ${i.due}</p></div>
+    ${badge(i.status)}
+  </div>
+  <table class="mt-4 min-w-full text-sm">
+    <tbody class="divide-y divide-gray-50">
+      ${i.lines.map(l => `<tr><td class="py-2 pr-3"><span class="mr-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500">${l.type.replace('_',' ')}</span>${l.desc}</td>
+      <td class="py-2 text-right tabular">${money(l.amount)}</td></tr>`).join('')}
+      <tr class="font-semibold"><td class="py-2">Total</td><td class="py-2 text-right tabular">${money(i.total)}</td></tr>
+      <tr class="text-emerald-600"><td class="py-1">Paid</td><td class="py-1 text-right tabular">−${money(i.paid)}</td></tr>
+      <tr class="font-bold"><td class="py-2">Balance due</td><td class="py-2 text-right tabular">${money(balance(i))}</td></tr>
+    </tbody></table>
+  <button onclick="closeModal()" class="mt-4 w-full rounded-xl border border-gray-200 py-2 text-sm font-medium text-gray-500 hover:bg-gray-50">Close</button>`);
+}
+
+function openPayModal(sid) {
+  const s = stu(sid);
+  const open = DB.invoices.filter(i => i.studentId === sid && ['Pending_Payment','Partially_Paid','Overdue'].includes(i.status));
+  const total = open.reduce((t,i) => t + balance(i), 0);
+  openModal(`
+  <h2 class="text-lg font-semibold">Record payment — ${s.name}</h2>
+  <p class="mt-1 text-sm text-gray-500">FIFO allocation across ${open.length} open invoice(s) · total due ${money(total)}. Partial amounts → <i>Partially Paid</i>.</p>
+  <div class="mt-4 space-y-3 text-sm">
+    <label class="block">Amount (THB)<input id="pay_amount" type="number" value="${total}" min="1" class="mt-1 w-full rounded-lg border-gray-200"></label>
+    <label class="block">Method<select id="pay_method" class="mt-1 w-full rounded-lg border-gray-200">
+      ${['Bank_Transfer','Credit_Card','Debit_Card','PromptPay','Cash'].map(m=>`<option value="${m}">${m.replace('_',' ')}</option>`).join('')}</select></label>
+    <div class="flex gap-2">
+      <button onclick="recordPayment('${sid}', document.getElementById('pay_amount').value, document.getElementById('pay_method').value)"
+        class="flex-1 rounded-xl bg-indigo-600 py-2.5 font-semibold text-white hover:bg-indigo-500">Process payment</button>
+      <button onclick="recordPayment('${sid}', Math.round(${total}/2), document.getElementById('pay_method').value)"
+        class="rounded-xl border border-gray-200 px-4 py-2.5 text-xs font-semibold text-gray-600 hover:bg-gray-50">Try 50% partial</button>
+    </div>
+  </div>`);
+}
+
+/* ----------------------- ROUTER ----------------------- */
+function go(page) {
+  route = page;
+  document.getElementById('pageTitle').textContent = PAGES.find(p => p.id === page).label.slice(3);
+  document.getElementById('nav').innerHTML = PAGES.map(p =>
+    `<button onclick="go('${p.id}')" class="block w-full rounded-xl px-3.5 py-2.5 text-left text-sm font-medium transition ${p.id === route ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50'}">${p.label}</button>`).join('');
+  const m = document.getElementById('mobileNav');
+  m.innerHTML = PAGES.map(p => `<option value="${p.id}" ${p.id===route?'selected':''}>${p.label}</option>`).join('');
+  document.getElementById('main').innerHTML =
+    { dashboard: pageDashboard, students: pageStudents, schedule: pageSchedule, documents: pageDocuments, billing: pageBilling }[page]();
+}
+
+document.getElementById('semBadge').textContent = `Semester 1 · ${new Date().getFullYear()}`;
+document.getElementById('todayLbl').textContent = new Date().toDateString();
+go('dashboard');
+</script>
+</body>
+</html>
